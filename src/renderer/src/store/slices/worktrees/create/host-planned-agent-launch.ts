@@ -25,26 +25,26 @@ export async function createWorktreeOnRuntimeHost(
   clientCreateSettings: ClientWorktreeCreateSettings
 ): Promise<CreatedWorktreeResult> {
   // A host that owns these settings is edited from Settings; sending ours would override what the user set there.
-  const createSettings = (await hostSupportsCapability(
+  const hostOwnsCreateSettings = await hostSupportsCapability(
     environmentId,
     WORKTREE_CREATE_HOST_OWNED_SETTINGS_RUNTIME_CAPABILITY
-  ))
-    ? {}
-    : clientCreateSettings
-  const call = (
+  )
+  const call = async (
     launch?: HostAgentLaunch,
     creationLaunch?: NonNullable<WorktreeCreateRequest['options']>['creationAgentLaunch']
-  ): Promise<CreateWorktreeResult> =>
-    callRuntimeRpc<CreateWorktreeResult>(
+  ): Promise<CreatedWorktreeResult> => ({
+    ...(await callRuntimeRpc<CreateWorktreeResult>(
       { kind: 'environment', environmentId },
       'worktree.create',
       {
         ...buildRuntimeWorktreeCreateParams(request, attempt, launch, creationLaunch),
         // Why: an older host's own store defaults would otherwise override the user's choices.
-        ...createSettings
+        ...(hostOwnsCreateSettings ? {} : clientCreateSettings)
       },
       { timeoutMs: 10 * 60_000 }
-    )
+    )),
+    ...(hostOwnsCreateSettings ? { hostOwnsCreateSettings: true as const } : {})
+  })
   const creationLaunch = request.options?.creationAgentLaunch
   if (
     creationLaunch &&
