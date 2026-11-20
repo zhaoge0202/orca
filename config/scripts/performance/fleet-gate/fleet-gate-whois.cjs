@@ -4,7 +4,7 @@ const root = path.join(os.homedir(), '.cache/orca-fleet-gate/builds')
 const dir = fs.readdirSync(root).find((d) => d.startsWith(process.argv[2]) && !d.endsWith('.log'))
 const base = path.join(root, dir, 'out/main')
 const files = fs.readdirSync(path.join(base, 'chunks')).map((f) => 'chunks/' + f).concat(['index.js'])
-const wanted = JSON.parse(process.argv[3])
+const wanted = JSON.parse(fs.readFileSync(path.join(__dirname, process.argv[3]), "utf8"))
 for (const [prefix, line, names] of wanted) {
   const file = files.find((f) => f === prefix || f.startsWith('chunks/' + prefix) || f.startsWith(prefix))
   if (!file) { console.log('WHOIS missing', prefix); continue }
