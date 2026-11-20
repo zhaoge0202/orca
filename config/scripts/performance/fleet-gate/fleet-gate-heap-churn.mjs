@@ -225,10 +225,14 @@ export async function heavyChatBurst({ page, userDataDir, windowMs }) {
 
 /** Measurement-only: grow the renderer heap, report it as the renderer does, then time renderer loop gaps. */
 export async function rendererHeapReads({ page, windowMs }) {
-  const grown = await page.evaluate(() => {
+  const grown = await page.evaluate(async () => {
     globalThis.__fleetHog = []
     for (let i = 0; i < 250; i += 1) {
-      globalThis.__fleetHog.push('x'.repeat(10_000_000) + i)
+      globalThis.__fleetHog.push(`${i}`.padEnd(10_000_000, String.fromCharCode(97 + (i % 26))))
+    }
+    // performance.memory refreshes lazily; wait until it reports the grown heap.
+    for (let tries = 0; tries < 60 && performance.memory.usedJSHeapSize < 1500 * 2 ** 20; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
     }
     const m = performance.memory
     const ticks = { last: performance.now(), max: 0, over250: 0, over1000: 0, totalLateMs: 0 }
