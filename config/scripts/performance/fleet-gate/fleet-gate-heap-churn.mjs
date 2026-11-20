@@ -222,3 +222,43 @@ export async function heavyChatBurst({ page, userDataDir, windowMs }) {
     note: `${burst.sessionIds.length} of ${chats} heavy chats (${burst.refused.length} refused${burst.refused[0] ? `: ${burst.refused[0]}` : ''})`
   }
 }
+
+/** Measurement-only: grow the renderer heap, report it as the renderer does, then time renderer loop gaps. */
+export async function rendererHeapReads({ page, windowMs }) {
+  const grown = await page.evaluate(() => {
+    globalThis.__fleetHog = []
+    for (let i = 0; i < 250; i += 1) {
+      globalThis.__fleetHog.push('x'.repeat(10_000_000) + i)
+    }
+    const m = performance.memory
+    const ticks = { last: performance.now(), max: 0, over250: 0, over1000: 0, totalLateMs: 0 }
+    globalThis.__fleetTicks = ticks
+    globalThis.__fleetTicker = setInterval(() => {
+      const now = performance.now()
+      const late = now - ticks.last - 50
+      ticks.last = now
+      if (late > 0) {
+        ticks.max = Math.max(ticks.max, late)
+        ticks.totalLateMs += late
+        if (late > 250) ticks.over250 += 1
+        if (late > 1000) ticks.over1000 += 1
+      }
+    }, 50)
+    const data = {
+      usedHeapMB: Math.round(m.usedJSHeapSize / 2 ** 20),
+      heapLimitMB: Math.round(m.jsHeapSizeLimit / 2 ** 20),
+      rendererSurface: 'main'
+    }
+    window.api.crashReports.recordBreadcrumb({ name: 'renderer_memory', data })
+    return data
+  })
+  await new Promise((resolve) => setTimeout(resolve, windowMs))
+  const ticks = await page.evaluate(() => {
+    clearInterval(globalThis.__fleetTicker)
+    globalThis.__fleetHog = null
+    const t = globalThis.__fleetTicks
+    return { maxGapMs: Math.round(t.max), over250: t.over250, over1000: t.over1000, lateMs: Math.round(t.totalLateMs) }
+  })
+  console.log(`RHEAP ${JSON.stringify({ grown, ticks })}`)
+  return { note: `renderer ${grown.usedHeapMB}/${grown.heapLimitMB} MB; loop max gap ${ticks.maxGapMs} ms, >250ms ${ticks.over250}, >1s ${ticks.over1000}` }
+}
