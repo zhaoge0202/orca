@@ -224,12 +224,20 @@ export async function heavyChatBurst({ page, userDataDir, windowMs }) {
 }
 
 /** Measurement-only: grow the renderer heap, report it as the renderer does, then time renderer loop gaps. */
-export async function rendererHeapReads({ page, windowMs }) {
+export async function rendererHeapReads({ page, userDataDir, windowMs }) {
   await page.evaluate(() => {
     globalThis.__fleetHog = []
     for (let i = 0; i < 250; i += 1) {
       // Repeated or padded strings share their pieces and take almost no heap; double arrays don't.
       globalThis.__fleetHog.push(new Array(1_250_000).fill(i + 0.5))
+    }
+    // Marking cost scales with object count, so add many small objects as a real heap has.
+    for (let i = 0; i < 150; i += 1) {
+      const chunk = new Array(100_000)
+      for (let j = 0; j < chunk.length; j += 1) {
+        chunk[j] = { i, j, next: j > 0 ? chunk[j - 1] : null }
+      }
+      globalThis.__fleetHog.push(chunk)
     }
   })
   // performance.memory is coarse and cached in renderers; read the real heap over CDP as the probe does.
@@ -269,6 +277,36 @@ export async function rendererHeapReads({ page, windowMs }) {
     const t = globalThis.__fleetTicks
     return { maxGapMs: Math.round(t.max), over250: t.over250, over1000: t.over1000, lateMs: Math.round(t.totalLateMs) }
   })
-  console.log(`RHEAP ${JSON.stringify({ grown, ticks })}`)
+  const profileReads = await countFileMentions(userDataDir, 'renderer_heap_allocation_profile')
+  console.log(`RHEAP ${JSON.stringify({ grown, ticks, profileReads })}`)
   return { note: `renderer ${grown.usedHeapMB}/${grown.heapLimitMB} MB; loop max gap ${ticks.maxGapMs} ms, >250ms ${ticks.over250}, >1s ${ticks.over1000}` }
+}
+
+/** How many times `needle` appears in the profile's small files (persisted breadcrumbs). */
+async function countFileMentions(root, needle) {
+  const { default: fs } = await import('node:fs')
+  const { default: path } = await import('node:path')
+  let count = 0
+  const walk = (dir, depth) => {
+    let entries = []
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory() && depth < 4) {
+        walk(full, depth + 1)
+      } else if (entry.isFile()) {
+        try {
+          if (fs.statSync(full).size < 20 * 1024 * 1024) {
+            count += fs.readFileSync(full, 'latin1').split(needle).length - 1
+          }
+        } catch {}
+      }
+    }
+  }
+  walk(root, 0)
+  return count
 }
