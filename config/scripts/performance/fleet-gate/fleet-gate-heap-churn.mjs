@@ -228,7 +228,8 @@ export async function rendererHeapReads({ page, windowMs }) {
   await page.evaluate(() => {
     globalThis.__fleetHog = []
     for (let i = 0; i < 250; i += 1) {
-      globalThis.__fleetHog.push(`${i}`.padEnd(10_000_000, String.fromCharCode(97 + (i % 26))))
+      // Repeated or padded strings share their pieces and take almost no heap; double arrays don't.
+      globalThis.__fleetHog.push(new Array(1_250_000).fill(i + 0.5))
     }
   })
   // performance.memory is coarse and cached in renderers; read the real heap over CDP as the probe does.
