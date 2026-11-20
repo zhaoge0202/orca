@@ -289,13 +289,14 @@ export function NewBotDialog({
         onOpenAutoFocus={(event) => {
           // The name, not Radix's first tabbable (the picture), so typing names the bot.
           event.preventDefault()
-          const field = nameRef.current
-          field?.focus()
-          // A long name it opens with (a link's, a proposal's) reads from its start, not its tail.
-          field?.setSelectionRange(0, 0)
-          if (field) {
-            field.scrollLeft = 0
+          if (fromShare) {
+            // The name is already the link's: the dialog takes focus, so a long one keeps its ellipsis.
+            if (event.currentTarget instanceof HTMLElement) {
+              event.currentTarget.focus()
+            }
+            return
           }
+          nameRef.current?.focus()
         }}
         onCloseAutoFocus={(event) => {
           // The new bot's page is opening and its composer takes focus; the New bot button must not.

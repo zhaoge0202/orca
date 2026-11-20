@@ -105,6 +105,11 @@ describe('NewBotDialog from a link', () => {
     expect(document.querySelector('textarea')).toBeNull()
   })
 
+  it('opens with the dialog focused, not the prefilled name', async () => {
+    renderFromShare()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('dialog')))
+  })
+
   it('makes the reviewed bot with the shared picture written by Create', async () => {
     mocks.createBot.mockResolvedValue(created)
     const { onOpenChange } = renderFromShare()
