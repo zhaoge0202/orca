@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Bot } from '../../../../../shared/bot-types'
 import type { ConnectorBotSlackState } from '../../../../../shared/connector-bot-slack-contract'
 import type { ExecutionHostId } from '../../../../../shared/execution-host/execution-host'
+import type * as BotHostStatus from '@/lib/bot-host-status'
 
 type Fake = ReturnType<typeof vi.fn>
 const mocks = vi.hoisted(() => {
@@ -13,7 +14,17 @@ const mocks = vi.hoisted(() => {
     hostEmail: string | null
     hosts: Record<string, Record<string, ReturnType<typeof vi.fn>>>
     open: ReturnType<typeof vi.fn>
-  } = { bots: [], hostEmail: 'm4air@example.test', hosts: {}, open: vi.fn() }
+    startHostSignIn: ReturnType<typeof vi.fn>
+    /** The server's verified status as the sign-in action reads it; null leaves the real one. */
+    hostStatus: null | { verified: boolean; approvesInBrowser: boolean }
+  } = {
+    bots: [],
+    hostEmail: 'm4air@example.test',
+    hosts: {},
+    open: vi.fn(),
+    startHostSignIn: vi.fn(),
+    hostStatus: null
+  }
   return state
 })
 vi.mock('@/lib/bot-catalog', () => ({
@@ -26,9 +37,22 @@ vi.mock('@/lib/bot-connector-host-calls', () => ({
 }))
 vi.mock('@/lib/bot-host-orca-account', () => ({
   useBotHostOrcaAccount: () =>
-    mocks.hostEmail ? { state: 'signed-in', email: mocks.hostEmail } : null
+    mocks.hostEmail ? { state: 'signed-in', email: mocks.hostEmail } : null,
+  startBotHostSignIn: mocks.startHostSignIn
 }))
 vi.mock('@/lib/bot-host-page', () => ({ openBotHostPageOrSay: mocks.open }))
+vi.mock('@/lib/bot-host-status', async (actual) => {
+  const real = await actual<typeof BotHostStatus>()
+  return {
+    ...real,
+    useBotHostVerified: (hostId: ExecutionHostId) =>
+      mocks.hostStatus ? mocks.hostStatus.verified : real.useBotHostVerified(hostId),
+    useBotHostHas: (hostId: ExecutionHostId, capability: string) =>
+      mocks.hostStatus && capability === ORCA_ACCOUNT_APPROVE_IN_BROWSER_RUNTIME_CAPABILITY
+        ? mocks.hostStatus.approvesInBrowser
+        : real.useBotHostHas(hostId, capability)
+  }
+})
 
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ConfirmationDialogProvider } from '@/components/dismiss/confirmation/confirmation-dialog'
@@ -37,6 +61,7 @@ import { stampBotHost } from '@/lib/bot-catalog-snapshot'
 import { useAppStore } from '@/store'
 import { ORCA_CONNECTED } from '../orca-sign-in.test-fixture'
 import { BotSlackSetupDialog } from './BotSlackSetupDialog'
+import { ORCA_ACCOUNT_APPROVE_IN_BROWSER_RUNTIME_CAPABILITY } from '../../../../../shared/orca-account-runtime-capabilities'
 
 const SERVER: ExecutionHostId = 'runtime:m4'
 const NOW = 1_800_000_000_000
@@ -108,6 +133,7 @@ beforeEach(() => {
   )
   mocks.bots = [bot({ id: 'mine', slack: { appId: 'A0', teamId: 'T1' } }, 'local')]
   mocks.hostEmail = 'm4air@example.test'
+  mocks.hostStatus = null
   mocks.open.mockReset().mockReturnValue('orca-browser')
   redeem.mockReset()
   writeClipboardText.mockReset().mockResolvedValue(undefined)
@@ -223,5 +249,43 @@ describe('BotSlackSetupDialog on a paired computer', () => {
     await screen.findByText('The install link expired.')
     fireEvent.click(screen.getByRole('button', { name: 'Get a new link' }))
     await waitFor(() => expect(mocks.hosts[SERVER].setUpApp).toHaveBeenCalledTimes(2))
+  })
+
+  it("sends a signed-out server to the server's own sign-in, never this computer's", async () => {
+    mocks.hostStatus = { verified: true, approvesInBrowser: true }
+    mocks.hosts[SERVER].state.mockResolvedValue({ ok: false, error: 'signed_out' })
+    const connect = vi.fn()
+    useAppStore.setState({ connectCurrentOrcaProfile: connect })
+    mocks.startHostSignIn.mockReset().mockResolvedValue(undefined)
+    openDialog()
+
+    const signIn = await screen.findByRole('button', { name: /^Sign in on / })
+    expect(screen.getByText(/^Sign .+ in to Orca Cloud to connect Slack\.$/)).toBeDefined()
+    expect(
+      screen.queryByText('Slack connects through Orca Cloud. Sign in to Orca to continue.')
+    ).toBeNull()
+    fireEvent.click(signIn)
+    expect(mocks.startHostSignIn).toHaveBeenCalledWith(
+      SERVER,
+      expect.objectContaining({ id: 'bot-1' })
+    )
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('asks to update an older server first, and offers nothing until the server is verified', async () => {
+    mocks.hosts[SERVER].state.mockResolvedValue({ ok: false, error: 'signed_out' })
+    mocks.hostStatus = { verified: true, approvesInBrowser: false }
+    openDialog()
+    expect(
+      await screen.findByText(/^Update Orca on .+, then sign it in from here\.$/)
+    ).toBeDefined()
+    expect(screen.queryByRole('button', { name: /^Sign in on / })).toBeNull()
+    cleanup()
+
+    mocks.hostStatus = { verified: false, approvesInBrowser: true }
+    openDialog()
+    await screen.findByText(/^Sign .+ in to Orca Cloud to connect Slack\.$/)
+    expect(screen.queryByRole('button', { name: /^Sign in on / })).toBeNull()
+    expect(screen.queryByText(/^Update Orca on /)).toBeNull()
   })
 })

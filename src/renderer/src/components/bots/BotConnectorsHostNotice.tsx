@@ -4,6 +4,7 @@ import React from 'react'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { translate } from '@/i18n/i18n'
 import { useTranslate } from '@/i18n/use-translate'
 import { readHostBots, useBotHostConnectorStatus } from '@/lib/bot-catalog'
 import type { BotHostConnectorStatus } from '@/lib/bot-catalog-snapshot'
@@ -17,6 +18,7 @@ import {
 import { useBotHostHas, useBotHostVerified } from '@/lib/bot-host-status'
 import { useAppStore } from '@/store'
 import { BOTS_CONNECTORS_RUNTIME_CAPABILITY } from '../../../../shared/bot-runtime-capabilities'
+import { ORCA_ACCOUNT_APPROVE_IN_BROWSER_RUNTIME_CAPABILITY } from '../../../../shared/orca-account-runtime-capabilities'
 import { botHasConnector, type Bot } from '../../../../shared/bot-types'
 import { botLinkOwners } from '../../../../shared/bot-link-owners'
 import type { ExecutionHostId } from '../../../../shared/execution-host/execution-host'
@@ -157,6 +159,56 @@ function SignInWaiting({
 }
 
 /**
+ * Whether Sign in on <server> can start here: 'start' only for a verified server that takes an
+ * approve-in-browser sign-in; 'update' for a verified older one, whose sign-in waits on a pasted code
+ * this window can't give; null while its status isn't verified, or where a sign-in can't work.
+ */
+export function useBotHostSignInFromHere(hostId: ExecutionHostId): 'start' | 'update' | null {
+  const verified = useBotHostVerified(hostId)
+  const approves = useBotHostHas(hostId, ORCA_ACCOUNT_APPROVE_IN_BROWSER_RUNTIME_CAPABILITY)
+  const account = useBotHostOrcaAccount(hostId)
+  // A build without Orca sign-in, or a server that can't save one, would only fail: its notice says why.
+  const cantSignIn =
+    account?.state === 'unconfigured' ||
+    (account !== null && account.state !== 'signed-in' && account.storage.kind === 'refused')
+  return !verified || cantSignIn ? null : approves ? 'start' : 'update'
+}
+
+/** What an older server shows where Sign in on <server> would be. */
+export function signInUpdateFirst(host: string): string {
+  return translate(
+    'bots.host.signIn.updateFirst',
+    'Update Orca on {{host}}, then sign it in from here.',
+    { host }
+  )
+}
+
+/** A server's notice state and the account it read, for the notice and a chat card. */
+export function useServerNoticeState(
+  hostId: ExecutionHostId,
+  bot: Bot | null
+): {
+  state: BotHostNoticeState
+  account: OrcaAccountServerStatus | null
+  connector: BotHostConnectorStatus | undefined
+} {
+  const account = useBotHostOrcaAccount(hostId)
+  const connector = useBotHostConnectorStatus(hostId)
+  const hasSetup = useBotHostHas(hostId, BOTS_CONNECTORS_RUNTIME_CAPABILITY)
+  const hasConnectorSetup = useBotHostVerified(hostId) ? hasSetup : null
+  const ownCloud = useAppStore((state) => state.orcaProfileAuthStatus?.cloud ?? null)
+  const own = ownCloud ? { userId: ownCloud.userId, email: ownCloud.email } : null
+  const state = botHostNoticeState({
+    account,
+    connector,
+    hasConnectorSetup,
+    linkOwners: bot ? botLinkOwners(bot) : [],
+    own
+  })
+  return { state, account, connector }
+}
+
+/**
  * A server's notice: for one of its bots, or (no bot) for all of them in Settings, where the group
  * header already says its account and version.
  */
@@ -170,20 +222,9 @@ function ServerNotice({
   bot: Bot | null
 }): React.JSX.Element | null {
   const t = useTranslate()
-  const account = useBotHostOrcaAccount(hostId)
-  const connector = useBotHostConnectorStatus(hostId)
-  const hasSetup = useBotHostHas(hostId, BOTS_CONNECTORS_RUNTIME_CAPABILITY)
-  const hasConnectorSetup = useBotHostVerified(hostId) ? hasSetup : null
-  const ownCloud = useAppStore((state) => state.orcaProfileAuthStatus?.cloud ?? null)
-  const own = ownCloud ? { userId: ownCloud.userId, email: ownCloud.email } : null
   const signIn = useBotHostSignIn(hostId)
-  const state = botHostNoticeState({
-    account,
-    connector,
-    hasConnectorSetup,
-    linkOwners: bot ? botLinkOwners(bot) : [],
-    own
-  })
+  const signInFromHere = useBotHostSignInFromHere(hostId)
+  const { state } = useServerNoticeState(hostId, bot)
   if (!state || (!bot && state.kind === 'update-needed')) {
     return null
   }
@@ -207,8 +248,10 @@ function ServerNotice({
       {text}
     </p>
   )
-  const signInButton = (label: string): React.JSX.Element =>
-    signIn.phase === 'waiting' ? (
+  const signInButton = (label: string): React.JSX.Element | null =>
+    signInFromHere === null ? null : signInFromHere === 'update' ? (
+      <p>{signInUpdateFirst(host)}</p>
+    ) : signIn.phase === 'waiting' ? (
       <SignInWaiting
         hostId={hostId}
         view={signIn}

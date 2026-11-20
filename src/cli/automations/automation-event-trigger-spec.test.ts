@@ -249,4 +249,22 @@ describe('--on trigger specs', () => {
       'webhook.call'
     )
   })
+
+  it('says which host is not signed in to Orca Cloud, and on a headless server how it signs in', () => {
+    const desktop = formatAutomationTriggerOptions(undefined, {
+      name: 'Scout',
+      cloudSignedOut: true
+    })
+    expect(desktop).toContain(
+      "This computer isn't signed in to Orca Cloud, and Slack, GitHub, Linear and webhook events reach Scout through Orca Cloud"
+    )
+    expect(desktop).not.toContain('orca auth login')
+    const server = formatAutomationTriggerOptions(undefined, {
+      name: 'Scout',
+      cloudSignedOut: true,
+      signInServer: 'box1'
+    })
+    expect(server).toContain("This Orca server (box1) isn't signed in to Orca Cloud")
+    expect(server).toContain('`orca auth login` in a terminal on box1')
+  })
 })

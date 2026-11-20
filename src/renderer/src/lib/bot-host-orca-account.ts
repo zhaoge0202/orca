@@ -69,7 +69,10 @@ function subscribe(listener: () => void): () => void {
 /** Reads the host's sign-in again; an older Orca without `orcaAccount.status` reads as unknown. */
 export function refreshBotHostOrcaAccount(hostId: ExecutionHostId): Promise<void> {
   const entry = entryOf(hostId)
-  entry.reading ??= callRuntimeRpc<OrcaAccountServerStatus>(
+  if (entry.reading) {
+    return entry.reading
+  }
+  entry.reading = callRuntimeRpc<OrcaAccountServerStatus>(
     botHostTarget(hostId),
     'orcaAccount.status'
   )
@@ -86,6 +89,8 @@ export function refreshBotHostOrcaAccount(hostId: ExecutionHostId): Promise<void
       entry.settled = true
       notify()
     })
+  // A view that must not act on the last read waits for this one.
+  notify()
   return entry.reading
 }
 
@@ -99,6 +104,11 @@ export function useBotHostOrcaAccount(hostId: ExecutionHostId): OrcaAccountServe
     })
   }, [hostId])
   return status
+}
+
+/** Whether a read of the host's sign-in is under way: until it lands, the last read may be stale. */
+export function useBotHostOrcaAccountReading(hostId: ExecutionHostId): boolean {
+  return useSyncExternalStore(subscribe, () => hosts.get(hostId)?.reading != null)
 }
 
 /** Whether the host's sign-in has been read at least once; before that its status is null for want of a read. */
