@@ -17,13 +17,18 @@ const mocks = vi.hoisted(() => {
     startHostSignIn: ReturnType<typeof vi.fn>
     /** The server's verified status as the sign-in action reads it; null leaves the real one. */
     hostStatus: null | { verified: boolean; approvesInBrowser: boolean }
+    /** The server's own account as the sign-in action reads it, when a test sets one. */
+    hostAccount: unknown
+    refreshAccount: ReturnType<typeof vi.fn>
   } = {
     bots: [],
     hostEmail: 'm4air@example.test',
     hosts: {},
     open: vi.fn(),
     startHostSignIn: vi.fn(),
-    hostStatus: null
+    hostStatus: null,
+    hostAccount: undefined,
+    refreshAccount: vi.fn()
   }
   return state
 })
@@ -37,7 +42,13 @@ vi.mock('@/lib/bot-connector-host-calls', () => ({
 }))
 vi.mock('@/lib/bot-host-orca-account', () => ({
   useBotHostOrcaAccount: () =>
-    mocks.hostEmail ? { state: 'signed-in', email: mocks.hostEmail } : null,
+    mocks.hostAccount !== undefined
+      ? mocks.hostAccount
+      : mocks.hostEmail
+        ? { state: 'signed-in', email: mocks.hostEmail }
+        : null,
+  useBotHostOrcaAccountSettled: () => true,
+  refreshBotHostOrcaAccount: mocks.refreshAccount,
   startBotHostSignIn: mocks.startHostSignIn
 }))
 vi.mock('@/lib/bot-host-page', () => ({ openBotHostPageOrSay: mocks.open }))
@@ -134,6 +145,8 @@ beforeEach(() => {
   mocks.bots = [bot({ id: 'mine', slack: { appId: 'A0', teamId: 'T1' } }, 'local')]
   mocks.hostEmail = 'm4air@example.test'
   mocks.hostStatus = null
+  mocks.hostAccount = undefined
+  mocks.refreshAccount.mockReset().mockResolvedValue(undefined)
   mocks.open.mockReset().mockReturnValue('orca-browser')
   redeem.mockReset()
   writeClipboardText.mockReset().mockResolvedValue(undefined)
@@ -287,5 +300,30 @@ describe('BotSlackSetupDialog on a paired computer', () => {
     await screen.findByText(/^Sign .+ in to Orca Cloud to connect Slack\.$/)
     expect(screen.queryByRole('button', { name: /^Sign in on / })).toBeNull()
     expect(screen.queryByText(/^Update Orca on /)).toBeNull()
+  })
+
+  it.each([
+    [
+      'a build without Orca Cloud sign-in',
+      { state: 'unconfigured', storage: { kind: 'os-keychain' } },
+      /^Orca on .+ was built without Orca Cloud sign-in\. Install Orca’s release build there to sign it in\.$/
+    ],
+    [
+      'a server that can’t save a sign-in',
+      { state: 'signed-out', storage: { kind: 'refused', reason: 'no keychain' } },
+      /^.+ can’t save an Orca sign-in: no keychain$/
+    ],
+    ['an account it couldn’t read', null, /^Couldn’t read .+’s Orca sign-in\.$/]
+  ])('offers no sign-in that would fail, and says why, for %s', async (_case, account, says) => {
+    mocks.hosts[SERVER].state.mockResolvedValue({ ok: false, error: 'signed_out' })
+    mocks.hostStatus = { verified: true, approvesInBrowser: true }
+    mocks.hostAccount = account
+    openDialog()
+    expect(await screen.findByText(says)).toBeDefined()
+    expect(screen.queryByRole('button', { name: /^Sign in on / })).toBeNull()
+    if (account === null) {
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(mocks.refreshAccount).toHaveBeenCalledWith(SERVER)
+    }
   })
 })

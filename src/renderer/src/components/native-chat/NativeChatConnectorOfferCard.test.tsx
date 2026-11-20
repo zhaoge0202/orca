@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Bot } from '../../../../shared/bot-types'
 
@@ -21,6 +21,7 @@ vi.mock('@/lib/bot-catalog', () => ({
   useBots: () => mocks.bots,
   updateBot: mocks.updateBot,
   useBotHostConnectorStatus: () => mocks.localConnector,
+  refreshBotHost: async () => undefined,
   useCardBot: (id: string) => ({
     bot: mocks.bots.find((bot: { id: string }) => bot.id === id) ?? null,
     ref: { hostId: 'local', id }
@@ -36,6 +37,7 @@ vi.mock('../bots/ConnectorSetupDialogs', () => ({
 }))
 // A paired server's own sign-in as the card reads it; its notice stands in as one line.
 type ServerRead = {
+  linkRead: boolean
   offline: boolean
   reading: boolean
   verified: boolean
@@ -45,6 +47,7 @@ type ServerRead = {
   connector: string | undefined
 }
 const server = vi.hoisted((): ServerRead => ({
+  linkRead: true,
   offline: false,
   reading: false,
   verified: true,
@@ -58,6 +61,11 @@ vi.mock('../bots/use-bot-host-label', () => ({
 }))
 vi.mock('@/lib/bot-host-status', () => ({ useBotHostVerified: () => server.verified }))
 vi.mock('@/lib/bot-host-views', () => ({ useBotHostOffline: () => server.offline }))
+vi.mock('@/lib/bot-host-link-read', () => ({ useBotHostLinkReadSinceOpen: () => server.linkRead }))
+vi.mock('@/lib/bot-catalog-snapshot', async (actual) => ({
+  ...(await actual<Record<string, unknown>>()),
+  readBotHostConnectorStatus: () => mocks.localConnector
+}))
 vi.mock('@/lib/bot-host-orca-account', () => ({
   useBotHostOrcaAccountSettled: () => server.settled,
   useBotHostOrcaAccountReading: () => server.reading
@@ -212,6 +220,7 @@ describe('the Sign in card for a host signed out of Orca', () => {
     }
     afterEach(() => {
       Object.assign(server, {
+        linkRead: true,
         offline: false,
         reading: false,
         verified: true,
@@ -254,6 +263,7 @@ describe('the Sign in card for a host signed out of Orca', () => {
       ['unverified', { verified: false }],
       ['offline, showing its last read', { offline: true }],
       ['a fresh read is still under way', { reading: true }],
+      ['its link to Orca Cloud has not been read since the card opened', { linkRead: false }],
       ['its link to Orca Cloud is unknown', { connector: undefined }],
       ['its link to Orca Cloud says signed out', { connector: 'signed-out' }],
       ['unread', { settled: false }],
@@ -343,5 +353,44 @@ describe("this computer's sign-in that Orca Cloud refuses", () => {
     mocks.localConnector = 'needs-sign-in'
     show(makeTestBot({ github: {} }), { source: 'github' })
     expect(screen.getByText('Paused')).toBeTruthy()
+  })
+})
+
+describe('signing this computer in again from the chat', () => {
+  afterEach(() => {
+    mocks.localConnector = 'ok'
+  })
+
+  it("tells the bot only once Orca Cloud takes this computer's sign-in", async () => {
+    const initial = useAppStore.getState()
+    const connect = vi.fn(orcaSignIn())
+    useAppStore.setState({
+      orcaProfileAuthStatus: ORCA_SIGNED_OUT,
+      connectCurrentOrcaProfile: connect
+    })
+    chat.send.mockClear()
+    mocks.localConnector = 'needs-sign-in'
+    mocks.bots = [makeTestBot({ slack: { appId: 'A1', teamId: 'T1' } })]
+    try {
+      render(
+        <NativeChatBotKickoffContext.Provider value={chatView}>
+          <NativeChatConnectorOfferCard
+            offer={{ botId: 'b1', source: 'slack', signIn: true }}
+            messageId="m1"
+            fallback="fallback line"
+          />
+        </NativeChatBotKickoffContext.Provider>
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+      await waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+      // The sign-in and the re-read of this computer's link both settle before the check.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(chat.send).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    } finally {
+      useAppStore.setState(initial, true)
+    }
   })
 })

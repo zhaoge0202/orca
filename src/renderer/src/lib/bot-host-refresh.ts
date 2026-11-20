@@ -22,6 +22,7 @@ import {
   type BotHostConnectorStatus
 } from './bot-catalog-snapshot'
 import { botHostTarget } from './bot-hosts'
+import { noteBotHostLinkRead } from './bot-host-link-read'
 
 type HostRefresh = {
   updatesInFlight: number
@@ -112,8 +113,10 @@ async function readBotHost(hostId: ExecutionHostId, state: HostRefresh): Promise
       },
       hostId
     )
+    noteBotHostLinkRead(hostId, true)
     readWhenNeedsYouGoesStale(hostId, state)
   } catch (error) {
+    noteBotHostLinkRead(hostId, false)
     markBotsListFailed(hostId)
     console.error('Failed to list bots:', error)
   }

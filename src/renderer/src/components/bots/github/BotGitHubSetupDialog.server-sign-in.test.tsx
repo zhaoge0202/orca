@@ -50,7 +50,8 @@ vi.mock('@/lib/bot-host-status', async (actual) => ({
 vi.mock('@/lib/bot-host-orca-account', async (actual) => ({
   ...(await actual<Record<string, unknown>>()),
   startBotHostSignIn: mocks.startHostSignIn,
-  useBotHostOrcaAccount: () => null
+  useBotHostOrcaAccount: () => ({ state: 'signed-out', storage: { kind: 'os-keychain' } }),
+  useBotHostOrcaAccountSettled: () => true
 }))
 
 import { GitHubInstallMount } from './GitHubInstallMount'

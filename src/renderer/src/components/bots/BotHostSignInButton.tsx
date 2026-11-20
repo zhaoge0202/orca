@@ -4,17 +4,14 @@ import { useTranslate } from '@/i18n/use-translate'
 import { useAppStore } from '@/store'
 import { useBotHostLabel } from './use-bot-host-label'
 import { startBotHostSignIn } from '@/lib/bot-host-orca-account'
-import {
-  showSignInBesidePage,
-  signInUpdateFirst,
-  useBotHostSignInFromHere
-} from './BotConnectorsHostNotice'
+import { showSignInBesidePage } from './BotConnectorsHostNotice'
+import { BotHostSignInBlocked, useBotHostSignInFromHere } from './bot-host-sign-in-from-here'
 import type { Bot } from '../../../../shared/bot-types'
 
 /**
  * A setup dialog's way out of "signed out of Orca": the sign-in of the computer the bot runs on.
  * A server's continues on the bot's Connectors notice, which shows its code to check; only a verified
- * server that takes it offers one, and an older one says to update it first.
+ * server whose sign-in can work offers one, and any other says what stands in the way.
  */
 export function BotHostSignInButton({
   bot,
@@ -29,9 +26,11 @@ export function BotHostSignInButton({
   const openSettingsPage = useAppStore((state) => state.openSettingsPage)
   const signInFromHere = useBotHostSignInFromHere(bot.hostId)
   if (host && signInFromHere !== 'start') {
-    return signInFromHere === 'update' ? (
-      <p className="text-sm text-muted-foreground">{signInUpdateFirst(host)}</p>
-    ) : null
+    return signInFromHere === null ? null : (
+      <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+        <BotHostSignInBlocked hostId={bot.hostId} host={host} why={signInFromHere} />
+      </div>
+    )
   }
   if (host) {
     return (

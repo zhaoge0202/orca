@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { useTranslate } from '@/i18n/use-translate'
-import { useCardBot } from '@/lib/bot-catalog'
+import { refreshBotHost, useCardBot } from '@/lib/bot-catalog'
 import { useBotGitHub } from '@/lib/bot-github-state'
 import { slackTeamState, useBotSlack } from '@/lib/bot-slack-state'
 import { connectorDescription } from '../bots/AddConnectorDialog'
@@ -39,6 +39,8 @@ import {
   useBotHostOrcaAccountSettled
 } from '@/lib/bot-host-orca-account'
 import { useBotHostOffline } from '@/lib/bot-host-views'
+import { useBotHostLinkReadSinceOpen } from '@/lib/bot-host-link-read'
+import { readBotHostConnectorStatus } from '@/lib/bot-catalog-snapshot'
 
 type OfferProps = {
   bot: Bot
@@ -245,7 +247,14 @@ function SignInOffer({ bot, offer, messageId }: SignInOfferProps): React.JSX.Ele
   if (!needsSignIn) {
     return <SignedInRow answering={answering} />
   }
-  return <OrcaCloudSignInLine text={signInReason(offer)} onSignedIn={() => tellBot(answering)} />
+  // Signing in again clears a refused sign-in only once this computer's link reads ok: tell the bot then.
+  const tellOnceLinked = async (): Promise<void> => {
+    await refreshBotHost(LOCAL_EXECUTION_HOST_ID)
+    if (readBotHostConnectorStatus(LOCAL_EXECUTION_HOST_ID) === 'ok') {
+      tellBot(answering)
+    }
+  }
+  return <OrcaCloudSignInLine text={signInReason(offer)} onSignedIn={tellOnceLinked} />
 }
 
 // Why the bot asks, for a server: its own sign-in, which the owner starts from here.
@@ -282,12 +291,14 @@ function ServerSignInOffer({
   const answering = useNativeChatOffer(bot.id, messageId)
   const offline = useBotHostOffline(bot.hostId)
   const reading = useBotHostOrcaAccountReading(bot.hostId)
-  // Only positive proof, read now: a live, verified server signed in, its link to Orca Cloud saying ok.
-  // Having told the bot once proves nothing about the server since.
+  const linkRead = useBotHostLinkReadSinceOpen(bot.hostId, refreshBotHost)
+  // Only positive proof, read now: a live, verified server signed in, and its link to Orca Cloud read
+  // since this card opened and saying ok. Having told the bot once proves nothing about it since.
   const ready =
     verified &&
     settled &&
     !reading &&
+    linkRead &&
     !offline &&
     state === null &&
     account?.state === 'signed-in' &&

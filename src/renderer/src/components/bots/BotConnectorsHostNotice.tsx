@@ -4,7 +4,6 @@ import React from 'react'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { translate } from '@/i18n/i18n'
 import { useTranslate } from '@/i18n/use-translate'
 import { readHostBots, useBotHostConnectorStatus } from '@/lib/bot-catalog'
 import type { BotHostConnectorStatus } from '@/lib/bot-catalog-snapshot'
@@ -18,12 +17,12 @@ import {
 import { useBotHostHas, useBotHostVerified } from '@/lib/bot-host-status'
 import { useAppStore } from '@/store'
 import { BOTS_CONNECTORS_RUNTIME_CAPABILITY } from '../../../../shared/bot-runtime-capabilities'
-import { ORCA_ACCOUNT_APPROVE_IN_BROWSER_RUNTIME_CAPABILITY } from '../../../../shared/orca-account-runtime-capabilities'
 import { botHasConnector, type Bot } from '../../../../shared/bot-types'
 import { botLinkOwners } from '../../../../shared/bot-link-owners'
 import type { ExecutionHostId } from '../../../../shared/execution-host/execution-host'
 import type { OrcaAccountServerStatus } from '../../../../shared/orca-account-server-sign-in'
 import { useBotHostLabel } from './use-bot-host-label'
+import { BotHostSignInBlocked, useBotHostSignInFromHere } from './bot-host-sign-in-from-here'
 import { openBotConnectorsTab } from './bot-settings-open'
 
 /** What the notice says for a server bot; null says nothing. */
@@ -158,31 +157,6 @@ function SignInWaiting({
   )
 }
 
-/**
- * Whether Sign in on <server> can start here: 'start' only for a verified server that takes an
- * approve-in-browser sign-in; 'update' for a verified older one, whose sign-in waits on a pasted code
- * this window can't give; null while its status isn't verified, or where a sign-in can't work.
- */
-export function useBotHostSignInFromHere(hostId: ExecutionHostId): 'start' | 'update' | null {
-  const verified = useBotHostVerified(hostId)
-  const approves = useBotHostHas(hostId, ORCA_ACCOUNT_APPROVE_IN_BROWSER_RUNTIME_CAPABILITY)
-  const account = useBotHostOrcaAccount(hostId)
-  // A build without Orca sign-in, or a server that can't save one, would only fail: its notice says why.
-  const cantSignIn =
-    account?.state === 'unconfigured' ||
-    (account !== null && account.state !== 'signed-in' && account.storage.kind === 'refused')
-  return !verified || cantSignIn ? null : approves ? 'start' : 'update'
-}
-
-/** What an older server shows where Sign in on <server> would be. */
-export function signInUpdateFirst(host: string): string {
-  return translate(
-    'bots.host.signIn.updateFirst',
-    'Update Orca on {{host}}, then sign it in from here.',
-    { host }
-  )
-}
-
 /** A server's notice state and the account it read, for the notice and a chat card. */
 export function useServerNoticeState(
   hostId: ExecutionHostId,
@@ -249,8 +223,8 @@ function ServerNotice({
     </p>
   )
   const signInButton = (label: string): React.JSX.Element | null =>
-    signInFromHere === null ? null : signInFromHere === 'update' ? (
-      <p>{signInUpdateFirst(host)}</p>
+    signInFromHere === null ? null : signInFromHere !== 'start' ? (
+      <BotHostSignInBlocked hostId={hostId} host={host} why={signInFromHere} />
     ) : signIn.phase === 'waiting' ? (
       <SignInWaiting
         hostId={hostId}
