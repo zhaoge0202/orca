@@ -1,10 +1,7 @@
-// Startup never installs a managed runtime; missing installations must fail before spawn.
+// Prepares a launch's account before its spawn.
 
 import '../../native-chat/agent-session-wire/providers/structured-agent-session-adapter'
-import {
-  AgentSessionPreSpawnError,
-  launchPreparationFailure
-} from '../../native-chat/agent-session-wire/providers/structured-agent-session-adapter-errors'
+import { launchPreparationFailure } from '../../native-chat/agent-session-wire/providers/structured-agent-session-adapter-errors'
 import type { StructuredAgentSessionAcquireInput } from '../../native-chat/agent-session-wire/providers/structured-agent-session-adapter'
 import type { AntigravityChatAuthConfig } from '../../../shared/agent-accounts/antigravity/antigravity-chat-auth-config'
 import type { AcpStructuredLaunch } from './acp-structured-launch-resolution'
@@ -39,16 +36,8 @@ export async function prepareAcpLaunch<
     throw launchPreparationFailure(error)
   }
   const launch = await resolve().catch(preparationFailure)
-  const { spec } = launch
   closedBeforeSpawn()
-  // Only a missed lookup returns the bare command; explicit Command settings resolve or fail.
-  if (spec.managedRuntime && launch.command === spec.command) {
-    throw new AgentSessionPreSpawnError(
-      new Error(`${spec.managedRuntime.label} is not installed on this host`),
-      { reason: 'runtimeNotInstalled' }
-    )
-  }
-  const { prepare } = spec.account
+  const { prepare } = launch.spec.account
   if (prepare) {
     await prepare(launch.env, launch.antigravityChatAuth, closedBeforeSpawn).catch(
       preparationFailure

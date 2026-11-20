@@ -9,8 +9,7 @@ import type {
 } from '../../native-chat/agent-session-wire/providers/structured-agent-session-adapter'
 import { providerTimelineSink } from '../../native-chat/agent-session-timeline/provider-timeline-plan'
 import { providerSpawnedProcessIdentity } from '../../provider-process/provider-spawned-process-identity'
-import { acpPrivateTempConnect } from '../launch/acp-private-temp'
-import { acpClientInfo } from '../launch/acp-client-info'
+import { ORCA_ACP_CLIENT_INFO } from '../launch/acp-client-info'
 import * as childState from './children/acp-structured-child'
 import type { AcpSessionEvent } from '../protocol/acp-session-events'
 import type { AcpStructuredConnection } from '../process/acp-structured-connection'
@@ -90,11 +89,7 @@ export async function acquireAcpStructuredSession(input: {
       early.push(deliver)
     }
   }
-  // Keep the last abort check and spawn synchronous when no temp directory is needed.
-  const connect = spec.privateTempDirectory
-    ? await acpPrivateTempConnect(deps, closedBeforeSpawn)
-    : deps.connect
-  const connection = connect(
+  const connection = deps.connect(
     {
       command: launch.command,
       args: launch.args,
@@ -102,11 +97,10 @@ export async function acquireAcpStructuredSession(input: {
       ...acpProcessEnvironment(launch)
     },
     {
-      clientInfo: acpClientInfo(spec, launch.version ?? null),
+      clientInfo: ORCA_ACP_CLIENT_INFO,
       // Only a chat can show a URL request's card, so other connections never advertise it.
       clientCapabilities: withAcpUrlElicitation(spec.dialect.clientCapabilities),
       retryBusyPrompts: spec.agent === 'omp',
-      ...(spec.signIn ? { signIn: spec.signIn } : {}),
       onPermission: (request, context) => {
         if (!childState.isAcpReadySession(session) || !session.turns?.acceptsRequests) {
           // Nobody can answer during Stop, a steer or teardown.
