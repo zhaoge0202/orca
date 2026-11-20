@@ -1,3 +1,5 @@
+// @protected-copy scope=file
+// Its copy is fixed: a bot from someone else's link is made here, on the security surface.
 import React, { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LayoutTemplate } from 'lucide-react'
@@ -50,6 +52,13 @@ import { NewBotPurposeField } from './NewBotPurposeField'
 import { BotCreateButton } from './BotCreateButton'
 import { BARE_HEADING_CLASS, keyboardNavMarkerHandlers } from './new-bot-bare-fields'
 import { openBotTemplates } from './templates/bot-templates-open'
+import { botShareErrorMessage } from './sharing/bot-share-error-copy'
+import {
+  createBotFromShare,
+  sharedMascot,
+  sharedPicturePng,
+  type NewBotShareSource
+} from './sharing/new-bot-from-share'
 
 type NewBotDraft = NewBotProposalDraft & { purpose: string }
 
@@ -100,7 +109,8 @@ export function NewBotDialog({
   returnFocusTo,
   onImport,
   hosts,
-  offerHostId
+  offerHostId,
+  fromShare
 }: {
   open: boolean
   /** Closed with `made` once that bot is created, else dismissed. */
@@ -131,6 +141,10 @@ export function NewBotDialog({
   /** The computer of the bot that proposed it (`fromOffer`): picked first. Made on another computer,
    *  it is a plain new bot, since that bot and the workspaces it named aren't there. */
   offerHostId?: ExecutionHostId
+  /** Made from a reviewed link, said in place of the description: its picture first, Ask picked first,
+   *  and Back returns to the review.
+   *  Create writes the reviewed bot, so there is no purpose to type. */
+  fromShare?: NewBotShareSource
 }): React.JSX.Element {
   const t = useTranslate()
   const nameRef = useRef<HTMLInputElement>(null)
@@ -142,13 +156,16 @@ export function NewBotDialog({
   const { hostId, blocked } = hostChoice.host
   const menu = useBotAgentMenu(hostId, open)
   const { choices } = menu
-  const agentSetup = useBotAgentSetup(choices, hostId, initialAgent)
+  // A bot from someone else's link starts on Ask, whatever the owner's chats do.
+  const agentSetup = useBotAgentSetup(choices, hostId, initialAgent, fromShare && 'ask')
   const [creating, setCreating] = useState(false)
   const trimmedName = name.trim()
   const createdBot = useRef(false)
+  const sharedPng = fromShare && sharedPicturePng(fromShare.review)
   const picture = useNewBotPicture(
     useBotHostHas(hostId, BOTS_AVATAR_COLOR_RUNTIME_CAPABILITY),
-    proposal?.mascot
+    fromShare ? sharedMascot(fromShare.review) : proposal?.mascot,
+    sharedPng
   )
   // Pasted, dropped and uploaded pictures, from the dialog and the picture popover alike.
   const intake = useBotAvatarIntakeState({ onPicture: picture.placeUpload, undoable: false })
@@ -191,31 +208,46 @@ export function NewBotDialog({
       return
     }
     setCreating(true)
+    // The shared picture is written by Create itself; another upload is saved after, as for any bot.
+    const keepsShared = sharedPng !== undefined && picture.shownUpload === sharedPng
     let bot: Bot
     try {
-      const made = editedProposal(proposal, draft, trimmedName)
-      const offerHere = hostId === (offerHostId ?? LOCAL_EXECUTION_HOST_ID)
-      bot = await createBot(hostId, {
-        ...(made
-          ? proposalCreateParams(
-              offerHere ? made : { ...made, worktrees: undefined },
-              agentSetup.setup.agent,
-              {
-                templatePackages,
-                skills: [...kept],
-                fromOffer: offerHere ? fromOffer : undefined
-              }
-            )
-          : { name: trimmedName }),
-        ...agentSetup.setup,
-        avatar: picture.avatar,
-        avatarColor: picture.avatarColor,
-        ...(takingOver ? { takingOver } : {})
-      })
-      bot = await picture.saveUpload(bot)
+      if (fromShare) {
+        const shared = await createBotFromShare(fromShare, hostId, {
+          name: trimmedName,
+          ...agentSetup.setup,
+          ...(keepsShared ? {} : { avatar: picture.avatar, avatarColor: picture.avatarColor })
+        })
+        if (!shared) {
+          setCreating(false)
+          return
+        }
+        bot = keepsShared ? shared : await picture.saveUpload(shared)
+      } else {
+        const made = editedProposal(proposal, draft, trimmedName)
+        const offerHere = hostId === (offerHostId ?? LOCAL_EXECUTION_HOST_ID)
+        bot = await createBot(hostId, {
+          ...(made
+            ? proposalCreateParams(
+                offerHere ? made : { ...made, worktrees: undefined },
+                agentSetup.setup.agent,
+                {
+                  templatePackages,
+                  skills: [...kept],
+                  fromOffer: offerHere ? fromOffer : undefined
+                }
+              )
+            : { name: trimmedName }),
+          ...agentSetup.setup,
+          avatar: picture.avatar,
+          avatarColor: picture.avatarColor,
+          ...(takingOver ? { takingOver } : {})
+        })
+        bot = await picture.saveUpload(bot)
+      }
     } catch (error) {
       setCreating(false)
-      toast.error(botErrorMessage(error))
+      toast.error(fromShare ? botShareErrorMessage(error) : botErrorMessage(error))
       return
     }
     // Closes once the bot exists, as a new workspace's composer does; its page opens next and shows
@@ -230,7 +262,12 @@ export function NewBotDialog({
     })
   }
 
-  const showTemplateLink = !proposal && !fromTemplates && !name && !draft.purpose
+  const shownOrigin = !fromShare
+    ? origin
+    : fromShare.review.publisher
+      ? t('bots.share.receive.origin', "From {{who}}'s link", { who: fromShare.review.publisher })
+      : t('bots.share.receive.originAnonymous', 'From a shared link')
+  const showTemplateLink = !proposal && !fromShare && !fromTemplates && !name && !draft.purpose
   const bandStyle: React.CSSProperties & { '--new-bot-band': string } = {
     '--new-bot-band': picture.color ?? DEFAULT_BOT_AVATAR_COLOR
   }
@@ -239,18 +276,26 @@ export function NewBotDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         size="form"
+        // Running someone else's instructions: a plugin theme never restyles it.
+        surface={fromShare ? 'security' : undefined}
         showCloseButton
         className={cn(
           'max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden',
           proposal && 'max-w-xl sm:max-w-xl'
         )}
         // Only a proposal's origin describes it; without one there is no description to point at.
-        {...(origin ? {} : { 'aria-describedby': undefined })}
+        {...(shownOrigin ? {} : { 'aria-describedby': undefined })}
         {...keyboardNavMarkerHandlers}
         onOpenAutoFocus={(event) => {
           // The name, not Radix's first tabbable (the picture), so typing names the bot.
           event.preventDefault()
-          nameRef.current?.focus()
+          const field = nameRef.current
+          field?.focus()
+          // A long name it opens with (a link's, a proposal's) reads from its start, not its tail.
+          field?.setSelectionRange(0, 0)
+          if (field) {
+            field.scrollLeft = 0
+          }
         }}
         onCloseAutoFocus={(event) => {
           // The new bot's page is opening and its composer takes focus; the New bot button must not.
@@ -273,7 +318,7 @@ export function NewBotDialog({
         )}
         <DialogHeader>
           <DialogTitle>{t('bots.new.title', 'New bot')}</DialogTitle>
-          {origin ? <DialogDescription>{origin}</DialogDescription> : null}
+          {shownOrigin ? <DialogDescription>{shownOrigin}</DialogDescription> : null}
         </DialogHeader>
         <form
           ref={formRef}
@@ -315,10 +360,12 @@ export function NewBotDialog({
                   onChange={(event) => setName(event.target.value)}
                 />
               </NewBotPictureButton>
-              <NewBotPurposeField
-                value={draft.purpose}
-                onChange={(purpose) => setDraft({ ...draft, purpose })}
-              />
+              {fromShare ? null : (
+                <NewBotPurposeField
+                  value={draft.purpose}
+                  onChange={(purpose) => setDraft({ ...draft, purpose })}
+                />
+              )}
             </div>
             <BotRunsOnPicker
               variant="fields"
@@ -370,6 +417,17 @@ export function NewBotDialog({
               >
                 <LayoutTemplate aria-hidden />
                 {t('bots.new.fromTemplate', 'Template')}
+              </Button>
+            ) : null}
+            {fromShare ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={creating}
+                onClick={fromShare.onBack}
+              >
+                {t('bots.share.receive.back', 'Back')}
               </Button>
             ) : null}
             <BotCreateButton type="submit" busy={creating} disabled={!canCreate}>
