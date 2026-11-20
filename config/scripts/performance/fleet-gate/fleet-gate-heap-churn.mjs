@@ -225,16 +225,24 @@ export async function heavyChatBurst({ page, userDataDir, windowMs }) {
 
 /** Measurement-only: grow the renderer heap, report it as the renderer does, then time renderer loop gaps. */
 export async function rendererHeapReads({ page, windowMs }) {
-  const grown = await page.evaluate(async () => {
+  await page.evaluate(() => {
     globalThis.__fleetHog = []
     for (let i = 0; i < 250; i += 1) {
       globalThis.__fleetHog.push(`${i}`.padEnd(10_000_000, String.fromCharCode(97 + (i % 26))))
     }
-    // performance.memory refreshes lazily; wait until it reports the grown heap.
-    for (let tries = 0; tries < 60 && performance.memory.usedJSHeapSize < 1500 * 2 ** 20; tries += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-    }
-    const m = performance.memory
+  })
+  // performance.memory is coarse and cached in renderers; read the real heap over CDP as the probe does.
+  const cdp = await page.context().newCDPSession(page)
+  const { usedSize, totalSize } = await cdp.send('Runtime.getHeapUsage')
+  const { jsHeapSizeLimit } = await page.evaluate(() => ({ jsHeapSizeLimit: performance.memory.jsHeapSizeLimit }))
+  await cdp.detach().catch(() => {})
+  const grown = {
+    usedHeapMB: Math.round(usedSize / 2 ** 20),
+    totalHeapMB: Math.round(totalSize / 2 ** 20),
+    heapLimitMB: Math.round(jsHeapSizeLimit / 2 ** 20),
+    rendererSurface: 'main'
+  }
+  await page.evaluate((data) => {
     const ticks = { last: performance.now(), max: 0, over250: 0, over1000: 0, totalLateMs: 0 }
     globalThis.__fleetTicks = ticks
     globalThis.__fleetTicker = setInterval(() => {
@@ -248,14 +256,11 @@ export async function rendererHeapReads({ page, windowMs }) {
         if (late > 1000) ticks.over1000 += 1
       }
     }, 50)
-    const data = {
-      usedHeapMB: Math.round(m.usedJSHeapSize / 2 ** 20),
-      heapLimitMB: Math.round(m.jsHeapSizeLimit / 2 ** 20),
-      rendererSurface: 'main'
-    }
-    window.api.crashReports.recordBreadcrumb({ name: 'renderer_memory', data })
-    return data
-  })
+    window.api.crashReports.recordBreadcrumb({
+      name: 'renderer_memory',
+      data: { usedHeapMB: data.usedHeapMB, heapLimitMB: data.heapLimitMB, rendererSurface: 'main' }
+    })
+  }, grown)
   await new Promise((resolve) => setTimeout(resolve, windowMs))
   const ticks = await page.evaluate(() => {
     clearInterval(globalThis.__fleetTicker)
