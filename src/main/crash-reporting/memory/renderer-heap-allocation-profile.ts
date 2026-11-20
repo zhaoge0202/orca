@@ -12,7 +12,7 @@ import {
 
 // A 512 KiB interval samples about two allocation stacks per MiB near OOM.
 const SAMPLING_INTERVAL_BYTES = 512 * 1024
-const START_HEAP_RATIO = 0.6
+const START_HEAP_RATIO = 0.25
 const STOP_HEAP_RATIO = 0.5
 // Each profile read forces a full renderer GC, so after the first read require this much growth.
 const PROFILE_READ_GROWTH_RATIO = 0.05
